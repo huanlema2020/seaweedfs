@@ -5,8 +5,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 	"os"
 	"os/user"
 	"path"
@@ -14,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/chrislusf/seaweedfs/weed/filesys/meta_cache"
 
 	"github.com/seaweedfs/fuse"
 	"github.com/seaweedfs/fuse/fs"
@@ -61,12 +62,13 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
+	var bucketsPath string
 	err = pb.WithGrpcFilerClient(filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer grpc address %s configuration: %v", filerGrpcAddress, err)
 		}
-		cipher = resp.Cipher
+		cipher, bucketsPath = resp.Cipher, resp.DirBuckets
 		return nil
 	})
 	if err != nil {
@@ -171,6 +173,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		FilerGrpcAddress:            filerGrpcAddress,
 		GrpcDialOption:              grpcDialOption,
 		FilerMountRootPath:          mountRoot,
+		FilerBucketsPath:            bucketsPath,
 		Collection:                  *option.collection,
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),

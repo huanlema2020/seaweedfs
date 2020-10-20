@@ -27,6 +27,7 @@ type Option struct {
 	FilerGrpcAddress   string
 	GrpcDialOption     grpc.DialOption
 	FilerMountRootPath string
+	FilerBucketsPath   string
 	Collection         string
 	Replication        string
 	TtlSec             int32
@@ -51,6 +52,8 @@ type Option struct {
 var _ = fs.FS(&WFS{})
 var _ = fs.FSStatfser(&WFS{})
 
+const FileIdPrefetchSize = 32
+
 type WFS struct {
 	option *Option
 
@@ -68,6 +71,9 @@ type WFS struct {
 	chunkCache *chunk_cache.TieredChunkCache
 	metaCache  *meta_cache.MetaCache
 	signature  int32
+
+	fileIdChan           chan *PreAssignFileIdResult
+	prefetchedCollection string
 }
 type statsCache struct {
 	filer_pb.StatisticsResponse
@@ -83,7 +89,8 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				return make([]byte, option.ChunkSizeLimit)
 			},
 		},
-		signature: util.RandomInt32(),
+		signature:  util.RandomInt32(),
+		fileIdChan: make(chan *PreAssignFileIdResult, FileIdPrefetchSize),
 	}
 	cacheUniqueId := util.Md5String([]byte(option.FilerGrpcAddress + option.FilerMountRootPath + util.Version()))[0:4]
 	cacheDir := path.Join(option.CacheDir, cacheUniqueId)
@@ -98,6 +105,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
 	})
+	go wfs.prefetchFileId()
 
 	entry, _ := filer_pb.GetEntry(wfs, util.FullPath(wfs.option.FilerMountRootPath))
 	wfs.root = &Dir{name: wfs.option.FilerMountRootPath, wfs: wfs, entry: entry}
